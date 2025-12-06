@@ -56,7 +56,7 @@ export default function MarkdownEditor({
         onChange={(val) => onChange(val || "")}
         preview={preview}
         hideToolbar={false}
-        visibleDragBar={false}
+        visibleDragbar={false}
         height={600}
       />
     </div>

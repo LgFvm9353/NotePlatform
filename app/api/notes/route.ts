@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server"
 import { getServerSession } from "next-auth"
-import { authOptions } from "../auth/[...nextauth]/route"
+import { authOptions } from "@/lib/auth"
 import { prisma } from "@/lib/prisma"
 import { z } from "zod"
 import { Prisma } from "@prisma/client"
 import { generateEmbedding } from "@/lib/openai"
+
+export const dynamic = 'force-dynamic'
 
 const noteSchema = z.object({
   title: z.string().min(1, "标题不能为空"),
