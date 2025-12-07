@@ -1,13 +1,20 @@
 import OpenAI from 'openai'
 
-if (!process.env.OPENAI_API_KEY) {
-  throw new Error('Missing OPENAI_API_KEY environment variable')
-}
+let openaiClient: OpenAI | null = null
 
-export const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-  baseURL: process.env.OPENAI_BASE_URL, // Optional: for compatible APIs
-})
+function getOpenAIClient(): OpenAI {
+  if (!openaiClient) {
+    const apiKey = process.env.OPENAI_API_KEY
+    if (!apiKey) {
+      throw new Error('Missing OPENAI_API_KEY environment variable')
+    }
+    openaiClient = new OpenAI({
+      apiKey,
+      baseURL: process.env.OPENAI_BASE_URL, // Optional: for compatible APIs
+    })
+  }
+  return openaiClient
+}
 
 export async function generateEmbedding(text: string) {
   // 移除 Markdown 格式，仅保留文本，减少 Token 消耗并提高语义准确度
@@ -16,6 +23,7 @@ export async function generateEmbedding(text: string) {
   if (!cleanText) return null
 
   try {
+    const openai = getOpenAIClient()
     const response = await openai.embeddings.create({
       model: process.env.OPENAI_MODEL_EMBEDDING || 'text-embedding-3-small',
       input: cleanText,
@@ -33,6 +41,7 @@ export async function generateSummary(text: string) {
   if (!text) return null
 
   try {
+    const openai = getOpenAIClient()
     const response = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL_CHAT || "gpt-4o-mini",
       messages: [
