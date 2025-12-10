@@ -38,17 +38,28 @@ class NoteService {
           
           return data
         } else {
-           // 如果是服务器错误 (500) 或 客户端错误 (400)，抛出异常，不要静默回退到本地脏数据
-           // 只有网络错误（fetch 抛出异常）才走 catch 块进行离线 fallback
-           const errorData = await response.json().catch(() => ({}))
-           throw new Error(errorData.error || `API Error: ${response.status}`)
+          // 服务器错误（4xx, 5xx）：区分可恢复和不可恢复的错误
+          // 401/403: 认证错误，应该抛出，不回退
+          // 500: 服务器错误，可能临时，可以回退到本地
+          if (response.status === 401 || response.status === 403) {
+            const errorData = await response.json().catch(() => ({}))
+            throw new Error(errorData.error || `认证错误: ${response.status}`)
+          }
+          // 其他错误（400, 500等）回退到离线模式
+          console.warn(`API 返回错误 ${response.status}，回退到离线模式`)
+          // 继续执行离线逻辑
         }
-      } catch (error) {
-        console.error("API 获取失败:", error)
-        // 区分网络错误和其他错误
-        // 如果是明确的 API 错误（如 500），最好让用户知道，而不是显示旧数据
-        // 但为了离线可用性，这里可以保留 fallback，但在 UI 层需要提示
-        throw error // 暂时直接抛出，让 UI 显示错误，解决"数据不一致"的困惑
+      } catch (error: any) {
+        // 判断是否是网络错误（TypeError: Failed to fetch）
+        // 网络错误应该回退到离线模式
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+          console.warn("网络错误，回退到离线模式:", error)
+          // 继续执行离线逻辑
+        } else {
+          // 其他错误（如认证错误）直接抛出
+          console.error("API 获取失败:", error)
+          throw error
+        }
       }
     }
 

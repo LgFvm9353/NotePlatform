@@ -110,9 +110,11 @@ export async function POST(request: NextRequest) {
         content: data.content,
         authorId: session.user.id,
         categoryId: data.categoryId || null,
-        tags: {
-          connect: data.tagIds?.map(id => ({ id })) || []
-        }
+        tags: data.tagIds && data.tagIds.length > 0
+          ? {
+              connect: data.tagIds.map(id => ({ id }))
+            }
+          : undefined
       },
       include: {
         category: true,

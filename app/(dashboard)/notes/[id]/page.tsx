@@ -10,6 +10,7 @@ import { Save, ArrowLeft, Trash2, ChevronLeft, CheckCircle2, Cloud, Sparkles, Lo
 import Link from "next/link"
 import dynamic from "next/dynamic"
 import { CategoryTagSelector } from "@/components/notes/CategoryTagSelector"
+import { getActualContent, hasSummary, upsertSummary } from "@/lib/markdownUtils"
 import { useAutoSave } from "@/hooks/useAutoSave"
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts"
 import { useToast } from "@/hooks/use-toast"
@@ -49,9 +50,11 @@ export default function EditNotePage() {
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [editorViewMode, setEditorViewMode] = useState<"split" | "edit" | "preview">("split")
+  const [error, setError] = useState<string | null>(null)
   const { toast } = useToast()
 
   const fetchNote = useCallback(async () => {
+    setError(null)
     try {
       const note = await noteService.getNote(noteId) as NoteWithRelations
 
@@ -61,15 +64,15 @@ export default function EditNotePage() {
         setCategoryId(note.category?.id || null)
         setTagIds(note.tags?.map((tag) => tag.id) || [])
       } else {
-        router.push("/notes")
+        setError("笔记不存在或已被删除")
       }
     } catch (error) {
       console.error("获取笔记失败:", error)
-      router.push("/notes")
+      setError("加载失败，请检查网络连接")
     } finally {
       setLoading(false)
     }
-  }, [noteId, router])
+  }, [noteId])
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -142,9 +145,11 @@ export default function EditNotePage() {
 
     setGeneratingSummary(true)
     try {
+      // 检查是否存在摘要（用于判断是替换还是新增）
+      const hasExistingSummary = hasSummary(content)
+      
       // 提取实际内容（去除已有的AI摘要部分）
-      const aiSummaryPattern = /^> \*\*AI 摘要\*\*：.*?\n\n---\n\n/s
-      const actualContent = content.replace(aiSummaryPattern, '').trim()
+      const actualContent = getActualContent(content)
       
       // 使用实际内容生成摘要
       const response = await fetch("/api/ai/summary", {
@@ -155,13 +160,9 @@ export default function EditNotePage() {
 
       if (response.ok) {
         const data = await response.json()
-        // 替换或添加摘要（如果已存在则替换，否则添加）
-        const newSummary = `> **AI 摘要**：${data.summary}\n\n---\n\n`
-        const hasExistingSummary = aiSummaryPattern.test(content)
         
-        const newContent = hasExistingSummary
-          ? content.replace(aiSummaryPattern, newSummary)
-          : `${newSummary}${actualContent}`
+        // 使用工具函数生成新内容
+        const newContent = upsertSummary(content, data.summary)
         
         setContent(newContent)
         toast({ 
@@ -188,15 +189,25 @@ export default function EditNotePage() {
   }
 
   // 自动保存功能
+  // 组合所有需要保存的状态作为依赖，任何变化都会触发
+  // 使用 JSON.stringify 生成简单的指纹用于比较变化
+  const autoSaveValue = JSON.stringify({ title, content, categoryId, tagIds })
+
   useAutoSave({
-    value: content,
-    onSave: async (value) => {
-      if (!title.trim() || !value.trim()) return
+    value: autoSaveValue,
+    onSave: async () => {
+      // 如果正在进行手动保存，跳过本次自动保存，防止冲突
+      if (isSavingRef.current) return
+      
+      // 只有标题和内容都不为空才保存
+      if (!title.trim() || !content.trim()) return
       
       try {
+        // 在自动保存期间也标记状态，防止手动保存同时触发
+        isSavingRef.current = true
         const updated = await noteService.updateNote(noteId, {
           title,
-          content: value,
+          content,
           categoryId,
           tagIds,
         })
@@ -205,6 +216,8 @@ export default function EditNotePage() {
         }
       } catch (error) {
         console.error("自动保存失败:", error)
+      } finally {
+        isSavingRef.current = false
       }
     },
     delay: 2000,
@@ -262,6 +275,18 @@ export default function EditNotePage() {
         <div className="flex flex-col items-center gap-2">
           <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <span className="text-sm text-muted-foreground">加载编辑器...</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-background">
+        <p className="text-destructive font-medium">{error}</p>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => router.push("/notes")}>返回列表</Button>
+          <Button onClick={() => fetchNote()}>重试</Button>
         </div>
       </div>
     )
@@ -374,6 +399,7 @@ export default function EditNotePage() {
           onChange={setContent} 
           viewMode={editorViewMode}
           onViewModeChange={setEditorViewMode}
+          onSave={handleSave}
         />
       </main>
     </div>

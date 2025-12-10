@@ -106,18 +106,24 @@ export async function PUT(
     // 更新 Embedding (异步)
     // 只有当标题或内容发生变化时才重新生成
     if (data.title !== undefined || data.content !== undefined) {
-      try {
-        const embedding = await generateEmbedding(`${note.title}\n${note.content}`)
-        if (embedding) {
-          await prisma.$executeRaw`
-            UPDATE "Note"
-            SET embedding = ${embedding}::vector
-            WHERE id = ${note.id}
-          `
+      // [修复] 使用 await 确保在 Serverless 环境下执行完成
+      const updateEmbedding = async () => {
+        try {
+          const embedding = await generateEmbedding(`${note.title}\n${note.content}`)
+          if (embedding) {
+            await prisma.$executeRaw`
+              UPDATE "Note"
+              SET embedding = ${embedding}::vector
+              WHERE id = ${note.id}
+            `
+          }
+        } catch (embeddingError) {
+          console.error("Embedding 更新失败:", embeddingError)
         }
-      } catch (embeddingError) {
-        console.error("Embedding 更新失败:", embeddingError)
       }
+      
+      // 增加 await，虽然增加延迟，但保证数据一致性和执行可靠性
+      await updateEmbedding()
     }
 
     return NextResponse.json({ note })

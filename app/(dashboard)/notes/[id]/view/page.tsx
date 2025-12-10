@@ -1,22 +1,14 @@
-"use client"
 
-import { useState, useEffect, useCallback } from "react"
-import { useSession } from "next-auth/react"
-import { useRouter, useParams } from "next/navigation"
+import { getServerSession } from "next-auth"
+import { authOptions } from "@/lib/auth"
+import { prisma } from "@/lib/prisma"
+import { notFound, redirect } from "next/navigation"
 import { Header } from "@/components/layout/Header"
-import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Separator } from "@/components/ui/separator"
 import { 
-  ArrowLeft, 
-  Edit, 
   Calendar, 
   Clock, 
-  Folder, 
   Tag as TagIcon, 
-  MoreHorizontal,
-  Share2,
-  Printer
 } from "lucide-react"
 import Link from "next/link"
 import ReactMarkdown from "react-markdown"
@@ -26,105 +18,42 @@ import "highlight.js/styles/github-dark.css"
 import { format } from "date-fns"
 import { zhCN } from "date-fns/locale"
 import { cn } from "@/lib/utils"
+import { NoteViewToolbar } from "@/components/notes/NoteViewToolbar"
 
-interface Note {
-  id: string
-  title: string
-  content: string
-  createdAt: string
-  updatedAt: string
-  category: {
-    id: string
-    name: string
-    color?: string
-  } | null
-  tags: {
-    id: string
-    name: string
-    color?: string
-  }[]
+// Server Component 直接获取数据，无需 useEffect 和 useState
+async function getNote(noteId: string, userId: string) {
+  const note = await prisma.note.findUnique({
+    where: {
+      id: noteId,
+      authorId: userId, // 确保只能访问自己的笔记
+    },
+    include: {
+      category: true,
+      tags: true,
+    }
+  })
+  return note
 }
 
-export default function ViewNotePage() {
-  const { data: session, status } = useSession()
-  const router = useRouter()
-  const params = useParams()
-  const noteId = params.id as string
+export default async function ViewNotePage({ params }: { params: { id: string } }) {
+  const session = await getServerSession(authOptions)
 
-  const [note, setNote] = useState<Note | null>(null)
-  const [loading, setLoading] = useState(true)
-
-  const fetchNote = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/notes/${noteId}`)
-      const data = await response.json()
-
-      if (response.ok) {
-        setNote(data.note)
-      } else {
-        router.push("/notes")
-      }
-    } catch (error) {
-      console.error("获取笔记失败:", error)
-      router.push("/notes")
-    } finally {
-      setLoading(false)
-    }
-  }, [noteId, router])
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/login")
-      return
-    }
-
-    if (status === "authenticated") {
-      fetchNote()
-    }
-  }, [status, noteId, router, fetchNote])
-
-  if (status === "loading" || loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-2">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-          <p className="text-muted-foreground text-sm">加载笔记中...</p>
-        </div>
-      </div>
-    )
+  if (!session?.user?.id) {
+    redirect("/login")
   }
 
-  if (!note) return null
+  const note = await getNote(params.id, session.user.id)
+
+  if (!note) {
+    notFound()
+  }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Header />
       
-      {/* Top Action Bar */}
-      <div className="border-b bg-muted/10 sticky top-14 z-40 backdrop-blur-sm supports-[backdrop-filter]:bg-background/60">
-        <div className="container mx-auto px-4 h-14 flex items-center justify-between max-w-4xl">
-          <div className="flex items-center gap-2">
-            <Link href="/notes">
-              <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground">
-                <ArrowLeft className="h-4 w-4 mr-1" />
-                返回列表
-              </Button>
-            </Link>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" title="打印" onClick={() => window.print()}>
-               <Printer className="h-4 w-4 text-muted-foreground" />
-            </Button>
-            <Link href={`/notes/${noteId}`}>
-              <Button size="sm" variant="outline">
-                <Edit className="h-3.5 w-3.5 mr-2" />
-                编辑笔记
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </div>
+      {/* 拆分出的客户端组件 */}
+      <NoteViewToolbar noteId={note.id} />
 
       <main className="flex-1 container mx-auto px-4 py-8 max-w-4xl">
         <article className="animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -138,11 +67,11 @@ export default function ViewNotePage() {
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-1.5" title="创建时间">
                   <Calendar className="h-4 w-4" />
-                  <span>{format(new Date(note.createdAt), "yyyy年MM月dd日", { locale: zhCN })}</span>
+                  <span>{format(note.createdAt, "yyyy年MM月dd日", { locale: zhCN })}</span>
                 </div>
                 <div className="flex items-center gap-1.5" title="最后更新">
                   <Clock className="h-4 w-4" />
-                  <span>{format(new Date(note.updatedAt), "HH:mm", { locale: zhCN })}</span>
+                  <span>{format(note.updatedAt, "HH:mm", { locale: zhCN })}</span>
                 </div>
               </div>
 
@@ -204,6 +133,24 @@ export default function ViewNotePage() {
                 blockquote: ({node, ...props}) => (
                    <blockquote className="border-l-4 border-primary/30 bg-muted/30 pl-4 py-1 pr-2 italic rounded-r-lg my-4" {...props} />
                 ),
+                // [优化] 自定义图片渲染，使用原生 img + lazy loading，避免 SSR 中 next/image 的复杂配置
+                // 如果是外部图片且未配置 remotePatterns，next/image 会报错。
+                // 这里的保守策略是使用原生 img 并优化属性。
+                img: ({node, src, alt, ...props}) => {
+                  if (!src) return null
+                  return (
+                    <span className="block my-6 relative rounded-lg overflow-hidden shadow-md">
+                        <img 
+                            src={src} 
+                            alt={alt || "note image"} 
+                            loading="lazy" 
+                            decoding="async"
+                            className="w-full h-auto object-cover max-h-[600px]"
+                            {...props} 
+                        />
+                    </span>
+                  )
+                },
                 table: ({node, ...props}) => (
                   <div className="overflow-x-auto my-4 rounded-lg border">
                     <table className="w-full" {...props} />
